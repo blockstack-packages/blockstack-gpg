@@ -31,6 +31,7 @@ import shutil
 import base64
 import copy
 import json
+import re
 from ConfigParser import SafeConfigParser
 
 import blockstack_client
@@ -44,6 +45,7 @@ client = blockstack_client
 log = get_logger("blockstack-gpg")
 
 import logging
+import urllib
 logging.getLogger("gnupg").setLevel( logging.CRITICAL )
 
 DEFAULT_KEY_SERVER = 'pgp.mit.edu'
@@ -59,12 +61,32 @@ def get_config_dir( config_dir=None ):
     return config_dir
 
 
+def is_valid_appname(appname):
+    """
+    Appname must be url-safe
+    """
+    # RFC 3896 unreserved characters, except for .
+    url_regex = '^[a-zA-Z0-9-_~]+$'
+    if re.match(url_regex, appname) is None:
+        return False
+    else:
+        return True
+
+
+def is_valid_keyname(keyname):
+    """
+    Keyname must be url-save
+    """
+    return is_valid_appname(keyname)
+
+
 def make_gpg_home(appname, config_dir=None):
     """
     Make GPG keyring dir for a particular application.
     Return the path.
     """
 
+    assert is_valid_appname(appname)
     config_dir = get_config_dir( config_dir )
     path = os.path.join( config_dir, "gpgkeys", appname )
 
@@ -81,6 +103,7 @@ def get_gpg_home( appname, config_dir=None ):
     Get the GPG keyring directory for a particular application.
     Return the path.
     """
+    assert is_valid_appname(appname)
     config_dir = get_config_dir( config_dir )
     path = os.path.join( config_dir, "gpgkeys", appname )
     return path 
@@ -120,6 +143,7 @@ def gpg_stash_key( appname, key_bin, config_dir=None, gpghome=None ):
     Return None on error
     """
 
+    assert is_valid_appname(appname)
     key_bin = str(key_bin)
 
     if gpghome is None:
@@ -148,6 +172,7 @@ def gpg_unstash_key( appname, key_id, config_dir=None, gpghome=None ):
     Return False on error
     """
 
+    assert is_valid_appname(appname)
     if gpghome is None:
         config_dir = get_config_dir( config_dir )
         keydir = get_gpg_home( appname, config_dir=config_dir )
@@ -247,6 +272,7 @@ def gpg_export_key( appname, key_id, config_dir=None ):
     Get the ASCII-armored key, given the ID
     """
 
+    assert is_valid_appname(appname)
     config_dir = get_config_dir( config_dir )
     keydir = get_gpg_home( appname, config_dir=config_dir )
     gpg = gnupg.GPG( gnupghome=keydir )
@@ -286,14 +312,16 @@ def gpg_list_app_keys( blockchain_id, appname, proxy=None, wallet_keys=None ):
     """
     List the set of available GPG keys tagged for a given application.
     The keys will have the format:
-        gpg/appname/keyname
+        gpg.appname.keyname
 
     Return list of {'identifier': key ID, 'contentUrl': URL to key data}
     Raise on error
     """
 
+    assert is_valid_appname(appname)
+
     key_info = []
-    key_prefix = "gpg/%s/" % appname
+    key_prefix = "gpg.%s." % appname
 
     # immutable data key listing (look for keys that start with 'appname:')
     immutable_listing = list_immutable_data( blockchain_id, proxy=proxy )
@@ -403,6 +431,10 @@ def gpg_profile_put_key( blockchain_id, key_id, key_name=None, immutable=True, t
     Return {'status': True, 'key_url': key_url, 'key_id': key fingerprint, ...} on success
     Return {'error': ...} on error
     """
+
+    if key_name is not None:
+        assert is_valid_keyname(key_name)
+
     if key_server is None:
         key_server = DEFAULT_KEY_SERVER 
 
@@ -488,9 +520,19 @@ def gpg_profile_delete_key( blockchain_id, key_id, proxy=None, wallet_keys=None 
         key_url = account['contentUrl']
         if key_url.startswith("blockstack://"):
             # delete
-            res = client.data_delete( key_url, proxy=proxy, wallet_keys=wallet_keys )
-            if 'error' in res:
-                errors.append({'key_url': key_url, 'message': res['error']})
+            try:
+                res = client.data_delete( key_url, proxy=proxy, wallet_keys=wallet_keys )
+                if 'error' in res:
+                    errors.append({'key_url': key_url, 'message': res['error']})
+            except AssertionError, e:
+                log.exception(e)
+                log.error("Failed to delete '%s'" % key_url)
+                raise
+
+            except Exception, e:
+                log.exception(e)
+                log.error("Failed to delete '%s'" % key_url)
+                continue
 
     ret = {'status': True}
     if len(errors) > 0:
@@ -509,6 +551,8 @@ def gpg_profile_create_key( blockchain_id, keyname, immutable=True, proxy=None, 
     Return {'status': True, 'key_url': ..., 'key_id': ..., } on success
     Return {'error': ...} on error
     """
+
+    assert is_valid_keyname(keyname)
 
     if config_dir is None:
         config_dir = get_config_dir()
@@ -552,6 +596,9 @@ def gpg_app_put_key( blockchain_id, appname, keyname, key_data, txid=None, immut
     Otherwise, the key is stored to mutable storage.
     """
 
+    assert is_valid_appname(appname)
+    assert is_valid_keyname(keyname)
+
     try:
         keydir = make_gpg_home( appname, config_dir=config_dir )
         key_id = gpg_stash_key( appname, key_data, config_dir=config_dir )
@@ -562,8 +609,9 @@ def gpg_app_put_key( blockchain_id, appname, keyname, key_data, txid=None, immut
         return {'error': "Failed to store GPG key locally"}
 
     # get public key... 
+    assert is_valid_appname(appname)
     pubkey_data = gpg_export_key( appname, key_id, config_dir=config_dir ) 
-    fq_key_name = "gpg/%s/%s" % (appname, keyname)
+    fq_key_name = "gpg.%s.%s" % (appname, keyname)
     key_url = None
 
     if not immutable:
@@ -599,7 +647,10 @@ def gpg_app_delete_key( blockchain_id, appname, keyname, txid=None, immutable=Fa
     on successful deletion, and it will be up to you to wait for the transaction to get confirmed.
     """
     
-    fq_key_name = "gpg/%s/%s" % (appname, keyname)
+    assert is_valid_appname(appname)
+    assert is_valid_keyname(keyname)
+
+    fq_key_name = "gpg.%s.%s" % (appname, keyname)
     result = {}
     dead_pubkey_dict = None
     dead_pubkey = None
@@ -654,6 +705,9 @@ def gpg_app_create_key( blockchain_id, appname, keyname, txid=None, immutable=Fa
 
     Return {'status': True, 'key_url': key_url, 'key_id': key fingerprint, ...} on success
     """
+
+    assert is_valid_appname(appname)
+    assert is_valid_keyname(keyname)
 
     if config_dir is None:
         config_dir = get_config_dir()
