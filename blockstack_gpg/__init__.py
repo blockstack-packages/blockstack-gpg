@@ -24,4 +24,5 @@
 from gpg import gpg_app_create_key, gpg_app_put_key, gpg_app_delete_key
 from gpg import gpg_profile_create_key, gpg_profile_put_key, gpg_profile_delete_key
 from gpg import gpg_list_app_keys, gpg_list_profile_keys
-from gpg import gpg_fetch_key 
+from gpg import gpg_fetch_key
+from gpg import gpg_profile_get_key, gpg_app_get_key
