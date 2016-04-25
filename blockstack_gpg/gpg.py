@@ -258,8 +258,11 @@ def gpg_verify_key( key_id, key_data, config_dir=None ):
     config_dir = get_config_dir( config_dir )
     sanitized_key_id = "".join( key_id.upper().split(" ") )
     fingerprint = gpg_key_fingerprint( key_data, config_dir=config_dir )
+    if fingerprint is None:
+        log.debug("Failed to fingerprint key")
+        return False
 
-    if sanitized_key_id != fingerprint and fingerprint.endswith( sanitized_key_id ):
+    if sanitized_key_id != fingerprint and not fingerprint.endswith( sanitized_key_id ):
         log.debug("Imported key does not match the given ID")
         return False
 
@@ -267,7 +270,7 @@ def gpg_verify_key( key_id, key_data, config_dir=None ):
         return True
 
 
-def gpg_export_key( appname, key_id, config_dir=None ):
+def gpg_export_key( appname, key_id, config_dir=None, include_private=False ):
     """
     Get the ASCII-armored key, given the ID
     """
@@ -276,7 +279,7 @@ def gpg_export_key( appname, key_id, config_dir=None ):
     config_dir = get_config_dir( config_dir )
     keydir = get_gpg_home( appname, config_dir=config_dir )
     gpg = gnupg.GPG( gnupghome=keydir )
-    keydat = gpg.export_keys( [key_id] )
+    keydat = gpg.export_keys( [key_id], secret=include_private )
     return keydat
 
 
@@ -300,10 +303,15 @@ def gpg_list_profile_keys( name, proxy=None, wallet_keys=None ):
         if account['service'] != 'pgp':
             continue 
 
-        ret.append({
+        info = {
             "identifier": account['identifier'],
             "contentUrl": account['contentUrl']
-        })
+        }
+
+        if 'keyName' in account.keys():
+            info['keyName'] = account['keyName']
+
+        ret.append(info)
 
     return ret
 
@@ -311,10 +319,7 @@ def gpg_list_profile_keys( name, proxy=None, wallet_keys=None ):
 def gpg_list_app_keys( blockchain_id, appname, proxy=None, wallet_keys=None ):
     """
     List the set of available GPG keys tagged for a given application.
-    The keys will have the format:
-        gpg.appname.keyname
-
-    Return list of {'identifier': key ID, 'contentUrl': URL to key data}
+    Return list of {'keyName': key name, 'contentUrl': URL to key data}
     Raise on error
     """
 
@@ -333,7 +338,7 @@ def gpg_list_app_keys( blockchain_id, appname, proxy=None, wallet_keys=None ):
         data_hash = immutable['hash']
         if name.startswith( key_prefix ):
             key_info.append( {
-                'identifier': name,
+                'keyName': name[len(key_prefix):],
                 'contentUrl': make_immutable_data_url( blockchain_id, name, data_hash )
             })
 
@@ -347,7 +352,7 @@ def gpg_list_app_keys( blockchain_id, appname, proxy=None, wallet_keys=None ):
         version = mutable['version']
         if name.startswith( key_prefix ):
             key_info.append( {
-                'identifier': name,
+                'keyName': name[len(key_prefix):],
                 'contentUrl': make_mutable_data_url( blockchain_id, name, version )
             })
 
@@ -391,7 +396,10 @@ def gpg_fetch_key( key_url, key_id=None, config_dir=None ):
 
         try:
             f = opener.open( key_url )
-            key_data = f.read()
+            key_data_str = f.read()
+            key_data_dict = json.loads(key_data_str)
+            assert len(key_data_dict) == 1, "Got multiple keys"
+            key_data = str(key_data_dict[key_data_dict.keys()[0]])
             f.close()
         except Exception, e:
             traceback.print_exc()
@@ -411,6 +419,7 @@ def gpg_fetch_key( key_url, key_id=None, config_dir=None ):
         if key_id is not None:
             rc = gpg_verify_key( key_id, key_data, config_dir=config_dir )
             if not rc:
+                log.error("Failed to verify key %s" % key_id)
                 return None
 
         dat = key_data 
@@ -581,12 +590,59 @@ def gpg_profile_create_key( blockchain_id, keyname, immutable=True, proxy=None, 
     return add_res
 
 
+def gpg_profile_get_key( blockchain_id, keyname, key_id=None, proxy=None, wallet_keys=None, config_dir=None, gpghome=None ):
+    """
+    Get the profile key
+    Return {'status': True, 'key_data': ..., 'key_id': ...} on success
+    Return {'error': ...} on error
+    """
+    
+    assert is_valid_keyname( keyname )
+    if config_dir is None:
+        config_dir = get_config_dir()
+
+    if gpghome is None:
+        gpghome = get_default_gpg_home()
+
+    accounts = blockstack_client.list_accounts( blockchain_id, proxy=proxy, wallet_keys=wallet_keys )
+    if 'error' in accounts:
+        return accounts
+
+    if len(accounts) == 0:
+        return {'error': 'No accounts in this profile'}
+
+    all_gpg_accounts = filter( lambda a: a['service'] == 'pgp', accounts )
+    if len(all_gpg_accounts) == 0:
+        return {'error': 'No GPG accounts in this profile'}
+    
+    # find the one with this key name 
+    gpg_accounts = filter( lambda ga: (ga.has_key('keyName') and ga['keyName'] == keyname) or (key_id is not None and ga['identifier'] == key_id), all_gpg_accounts )
+    if len(gpg_accounts) == 0:
+        return {'error': 'No such GPG key found'}
+
+    if len(gpg_accounts) > 1:
+        return {'error': 'Multiple keys with that name'}
+
+    # go get the key 
+    key_data = gpg_fetch_key( gpg_accounts[0]['contentUrl'], key_id=gpg_accounts[0]['identifier'], config_dir=config_dir )
+    if key_data is None:
+        return {'error': 'Failed to download and verify key'}
+
+    ret = {
+        'status': True,
+        'key_id': gpg_accounts[0]['identifier'],
+        'key_data': key_data
+    }
+
+    return ret
+
+
 def gpg_app_put_key( blockchain_id, appname, keyname, key_data, txid=None, immutable=False, proxy=None, wallet_keys=None, config_dir=None ):
     """
     Put an application GPG key.
     Stash the private key locally to an app-specific keyring.
 
-    Return {'status': True, 'key_url': ...} on success
+    Return {'status': True, 'key_url': ..., 'key_data': ...} on success
     Return {'error': ...} on error
     
     If immutable is True, then store the data as an immutable entry (e.g. update the zonefile with the key hash)
@@ -610,7 +666,11 @@ def gpg_app_put_key( blockchain_id, appname, keyname, key_data, txid=None, immut
 
     # get public key... 
     assert is_valid_appname(appname)
-    pubkey_data = gpg_export_key( appname, key_id, config_dir=config_dir ) 
+    try:
+        pubkey_data = gpg_export_key( appname, key_id, config_dir=config_dir ) 
+    except:
+        return {'error': 'Failed to load key'}
+
     fq_key_name = "gpg.%s.%s" % (appname, keyname)
     key_url = None
 
@@ -667,7 +727,6 @@ def gpg_app_delete_key( blockchain_id, appname, keyname, txid=None, immutable=Fa
         dead_pubkey_dict = client.get_immutable( blockchain_id, None, data_id=fq_key_name, proxy=proxy )
         if 'error' in dead_pubkey_dict:
             return dead_pubkey_dict
-
     
     dead_pubkey_kv = dead_pubkey_dict['data']
     assert len(dead_pubkey_kv.keys()) == 1, "Not a public key we wrote: %s" % dead_pubkey_kv
@@ -727,4 +786,135 @@ def gpg_app_create_key( blockchain_id, appname, keyname, txid=None, immutable=Fa
     # propagate to blockstack
     add_res = gpg_app_put_key( blockchain_id, appname, keyname, key_data, txid=txid, immutable=immutable, proxy=proxy, wallet_keys=wallet_keys, config_dir=config_dir )
     return add_res
+
+
+def gpg_app_get_key( blockchain_id, appname, keyname, immutable=False, key_id=None, key_hash=None, key_version=None, proxy=None, config_dir=None, gpghome=None ):
+    """
+    Get an app-specific GPG key.
+    Return {'status': True, 'key_id': ..., 'key': ...} on success
+    return {'error': ...} on error
+    """
+
+    assert is_valid_appname(appname)
+    assert is_valid_keyname(keyname)
+
+    if config_dir is None:
+        config_dir = get_config_dir()
+
+    if gpghome is None:
+        gpghome = get_default_gpg_home()
+
+    fq_key_name = "gpg.%s.%s" % (appname, keyname)
+    key_url = None 
+
+    if immutable:
+        # try immutable
+        key_url = blockstack_client.make_immutable_data_url( blockchain_id, fq_key_name, key_hash )
+
+    else:
+        # try mutable 
+        key_url = blockstack_client.make_mutable_data_url( blockchain_id, fq_key_name, key_version )
+
+    key_data = gpg_fetch_key( key_url, key_id=key_id, config_dir=config_dir )
+    if key_data is None:
+        return {'error': 'Failed to fetch key'}
+
+    if key_id is None:
+        key_id = gpg_key_fingerprint( key_data, config_dir=config_dir )
+
+    ret = {
+        'status': True,
+        'key_id': key_id,
+        'key_data': key_data
+    }
+
+    return ret
+
+
+def gpg_encrypt( fd_in, path_out, sender_key_info, recipient_key_infos, passphrase=None, config_dir=None ):
+    """
+    Encrypt a stream of data for a set of keys.
+    @sender_key_info and @recipient_key_infos should be data returned by gpg_app_get_key
+    or gpg_profile_get_key.
+    Return {'status': True} on success
+    Return {'error': ...} on error
+    """
+
+    if config_dir is None:
+        config_dir = get_config_dir()
+
+    # ingest keys 
+    tmpdir = make_gpg_tmphome( prefix="encrypt", config_dir=config_dir )
+    for key_info in recipient_key_infos:
+        res = gpg_stash_key( "encrypt", key_info['key_data'], config_dir=config_dir, gpghome=tmpdir )
+        if res is None:
+            shutil.rmtree(tmpdir)
+            return {'error': 'Failed to stash key %s' % key_info['key_id']}
+
+    # copy over our key
+    try:
+        sender_privkey = gpg_export_key( sender_key_info['key_id'], include_private=True, config_dir=config_dir )
+    except:
+        shutil.rmtree(tmpdir)
+        return {'error': 'No such private key'}
+
+    res = gpg_stash_key( "encrypt", sender_privkey, config_dir=config_dir, gpghome=tmpdir )
+    if res is None:
+        shutil.rmtree(tmpdir)
+        return {'error': 'Failed to load sender private key'}
+
+    recipient_key_ids = [r['key_id'] for r in recipient_key_infos]
+
+    # do the encryption
+    gpg = gnupg.GPG( gnupghome=tmpdir )
+    res = gpg.encrypt_file( fd_in, recipient_key_ids, sign=sender_key_info['key_id'], passphrase=passphrase, output=path_out )
+    shutil.rmtree(tmpdir)
+
+    if res.status != 'encryption ok':
+        log.debug("encrypt_file: %s" % res.__dict__)
+        return {'error': 'Failed to encrypt data'}
+    
+    return {'status': True}
+
+
+def gpg_decrypt( fd_in, path_out, sender_key_info, my_key_info, passphrase=None, config_dir=None ):
+    """
+    Decrypt a stream of data using key info 
+    for a private key we own.
+    @my_key_info and @sender_key_info should be data returned by gpg_app_get_key or gpg_profile_get_key
+    Return {'status': True} on succes
+    Return {'error': ...} on error
+    """
+
+    if config_dir is None:
+        config_dir = get_config_dir()
+
+    # ingest keys 
+    tmpdir = make_gpg_tmphome( prefix="decrypt", config_dir=config_dir )
+    res = gpg_stash_key( "decrypt", sender_key_info['key_data'], config_dir=config_dir, gpghome=tmpdir )
+    if res is None:
+        shutil.rmtree(tmpdir)
+        return {'error': 'Failed to stash key %s' % key_info['key_id']}
+
+    try:
+        my_privkey = gpg_export_key( my_key_info['key_id'], include_private=True, config_dir=config_dir )
+    except:
+        shutil.rmtree(tmpdir)
+        return {'error': 'Failed to load local private key for %s' % my_key_info['key_id']}
+
+    res = gpg_stash_key( "decrypt", sender_privkey, config_dir=config_dir, gpghome=tmpdir )
+    if res is None:
+        shutil.rmtree(tmpdir)
+        return {'error': 'Failed to load private key'}
+
+    # do the decryption 
+    gpg = gnupg.gpg( gnupghome=tmpdir )
+    res = gpg.decrypt_file( fd_in, passphrase=passphrase, output=path_out )
+    shutil.rmtree(tmpdir)
+
+    if res.status != 'decryption ok':
+        log.debug("decrypt_file: %s" % res.__dict__}
+        return {'error': 'Failed to decrypt data'}
+
+    return {'status': True}
 
