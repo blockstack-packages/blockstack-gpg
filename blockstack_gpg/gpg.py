@@ -137,7 +137,7 @@ def make_gpg_tmphome( prefix=None, config_dir=None ):
 
 def gpg_stash_key( appname, key_bin, config_dir=None, gpghome=None ):
     """
-    Store a public key locally to our app keyring.
+    Store a key locally to our app keyring.
     Does NOT put it into a blockchain ID
     Return the key ID on success
     Return None on error
@@ -159,7 +159,9 @@ def gpg_stash_key( appname, key_bin, config_dir=None, gpghome=None ):
         assert res.count == 1, "Failed to store key"
     except AssertionError, e:
         log.exception(e)
-        log.error("Failed to store key")
+        log.error("Failed to store key to %s" % keydir)
+        log.debug("res: %s" % res.__dict__)
+        log.debug("(%s)\n%s" % (len(key_bin), key_bin))
         return None
 
     return res.fingerprints[0]
@@ -280,6 +282,11 @@ def gpg_export_key( appname, key_id, config_dir=None, include_private=False ):
     keydir = get_gpg_home( appname, config_dir=config_dir )
     gpg = gnupg.GPG( gnupghome=keydir )
     keydat = gpg.export_keys( [key_id], secret=include_private )
+
+    if not keydat:
+        log.debug("Failed to export key %s from '%s'" % (key_id, keydir))
+
+    assert keydat
     return keydat
 
 
@@ -402,7 +409,6 @@ def gpg_fetch_key( key_url, key_id=None, config_dir=None ):
             key_data = str(key_data_dict[key_data_dict.keys()[0]])
             f.close()
         except Exception, e:
-            traceback.print_exc()
             if key_id is not None:
                 log.error("Failed to fetch key '%s' from '%s'" % (key_id, key_url))
             else:
@@ -657,8 +663,9 @@ def gpg_app_put_key( blockchain_id, appname, keyname, key_data, txid=None, immut
 
     try:
         keydir = make_gpg_home( appname, config_dir=config_dir )
-        key_id = gpg_stash_key( appname, key_data, config_dir=config_dir )
+        key_id = gpg_stash_key( appname, key_data, config_dir=config_dir, gpghome=keydir )
         assert key_id is not None, "Failed to stash key"
+        log.debug("Stashed app key '%s:%s' (%s) under '%s'" % (appname, keyname, key_id, keydir))
     except Exception, e:
         log.exception(e)
         log.error("Failed to store GPG key '%s'" % keyname)
@@ -691,6 +698,7 @@ def gpg_app_put_key( blockchain_id, appname, keyname, key_data, txid=None, immut
     res['key_url'] = key_url
     res['key_data'] = pubkey_data
     res['key_id'] = gpg_key_fingerprint( pubkey_data, config_dir=config_dir )
+    log.debug("Put key %s:%s (%s) to %s" % (appname, keyname, res['key_id'], key_url))
     return res
 
 
@@ -779,7 +787,7 @@ def gpg_app_create_key( blockchain_id, appname, keyname, txid=None, immutable=Fa
     key_input = gpg.gen_key_input( key_type="RSA", name_email=blockchain_id + "/" + appname, key_length=4096, name_real=keyname )
     key_res = gpg.gen_key( key_input )
     key_id = key_res.fingerprint
-    key_data = gpg.export_keys( [key_id] )
+    key_data = gpg.export_keys( [key_id], secret=True )
 
     shutil.rmtree(keydir)
 
@@ -788,10 +796,10 @@ def gpg_app_create_key( blockchain_id, appname, keyname, txid=None, immutable=Fa
     return add_res
 
 
-def gpg_app_get_key( blockchain_id, appname, keyname, immutable=False, key_id=None, key_hash=None, key_version=None, proxy=None, config_dir=None, gpghome=None ):
+def gpg_app_get_key( blockchain_id, appname, keyname, immutable=False, key_id=None, key_hash=None, key_version=None, proxy=None, config_dir=None ):
     """
     Get an app-specific GPG key.
-    Return {'status': True, 'key_id': ..., 'key': ...} on success
+    Return {'status': True, 'key_id': ..., 'key': ..., 'app_name': ...} on success
     return {'error': ...} on error
     """
 
@@ -800,9 +808,6 @@ def gpg_app_get_key( blockchain_id, appname, keyname, immutable=False, key_id=No
 
     if config_dir is None:
         config_dir = get_config_dir()
-
-    if gpghome is None:
-        gpghome = get_default_gpg_home()
 
     fq_key_name = "gpg.%s.%s" % (appname, keyname)
     key_url = None 
@@ -815,6 +820,7 @@ def gpg_app_get_key( blockchain_id, appname, keyname, immutable=False, key_id=No
         # try mutable 
         key_url = blockstack_client.make_mutable_data_url( blockchain_id, fq_key_name, key_version )
 
+    log.debug("fetch '%s'" % key_url)
     key_data = gpg_fetch_key( key_url, key_id=key_id, config_dir=config_dir )
     if key_data is None:
         return {'error': 'Failed to fetch key'}
@@ -825,7 +831,8 @@ def gpg_app_get_key( blockchain_id, appname, keyname, immutable=False, key_id=No
     ret = {
         'status': True,
         'key_id': key_id,
-        'key_data': key_data
+        'key_data': key_data,
+        'app_name': appname
     }
 
     return ret
@@ -834,8 +841,7 @@ def gpg_app_get_key( blockchain_id, appname, keyname, immutable=False, key_id=No
 def gpg_encrypt( fd_in, path_out, sender_key_info, recipient_key_infos, passphrase=None, config_dir=None ):
     """
     Encrypt a stream of data for a set of keys.
-    @sender_key_info and @recipient_key_infos should be data returned by gpg_app_get_key
-    or gpg_profile_get_key.
+    @sender_key_info and @recipient_key_infos should be data returned by gpg_app_get_key.
     Return {'status': True} on success
     Return {'error': ...} on error
     """
@@ -853,8 +859,9 @@ def gpg_encrypt( fd_in, path_out, sender_key_info, recipient_key_infos, passphra
 
     # copy over our key
     try:
-        sender_privkey = gpg_export_key( sender_key_info['key_id'], include_private=True, config_dir=config_dir )
-    except:
+        sender_privkey = gpg_export_key( sender_key_info['app_name'], sender_key_info['key_id'], include_private=True, config_dir=config_dir )
+    except Exception, e:
+        log.exception(e)
         shutil.rmtree(tmpdir)
         return {'error': 'No such private key'}
 
@@ -867,11 +874,13 @@ def gpg_encrypt( fd_in, path_out, sender_key_info, recipient_key_infos, passphra
 
     # do the encryption
     gpg = gnupg.GPG( gnupghome=tmpdir )
-    res = gpg.encrypt_file( fd_in, recipient_key_ids, sign=sender_key_info['key_id'], passphrase=passphrase, output=path_out )
+    res = gpg.encrypt_file( fd_in, recipient_key_ids, sign=sender_key_info['key_id'], passphrase=passphrase, output=path_out, always_trust=True )
     shutil.rmtree(tmpdir)
 
     if res.status != 'encryption ok':
-        log.debug("encrypt_file: %s" % res.__dict__)
+        log.debug("encrypt_file error: %s" % res.__dict__)
+        log.debug("recipients: %s" % recipient_key_ids)
+        log.debug("signer: %s" % sender_key_info['key_id'])
         return {'error': 'Failed to encrypt data'}
     
     return {'status': True}
@@ -881,7 +890,7 @@ def gpg_decrypt( fd_in, path_out, sender_key_info, my_key_info, passphrase=None,
     """
     Decrypt a stream of data using key info 
     for a private key we own.
-    @my_key_info and @sender_key_info should be data returned by gpg_app_get_key or gpg_profile_get_key
+    @my_key_info and @sender_key_info should be data returned by gpg_app_get_key
     Return {'status': True} on succes
     Return {'error': ...} on error
     """
@@ -897,24 +906,25 @@ def gpg_decrypt( fd_in, path_out, sender_key_info, my_key_info, passphrase=None,
         return {'error': 'Failed to stash key %s' % key_info['key_id']}
 
     try:
-        my_privkey = gpg_export_key( my_key_info['key_id'], include_private=True, config_dir=config_dir )
+        my_privkey = gpg_export_key( my_key_info['app_name'], my_key_info['key_id'], include_private=True, config_dir=config_dir )
     except:
         shutil.rmtree(tmpdir)
         return {'error': 'Failed to load local private key for %s' % my_key_info['key_id']}
 
-    res = gpg_stash_key( "decrypt", sender_privkey, config_dir=config_dir, gpghome=tmpdir )
+    res = gpg_stash_key( "decrypt", my_privkey, config_dir=config_dir, gpghome=tmpdir )
     if res is None:
         shutil.rmtree(tmpdir)
         return {'error': 'Failed to load private key'}
 
     # do the decryption 
-    gpg = gnupg.gpg( gnupghome=tmpdir )
-    res = gpg.decrypt_file( fd_in, passphrase=passphrase, output=path_out )
+    gpg = gnupg.GPG( gnupghome=tmpdir )
+    res = gpg.decrypt_file( fd_in, passphrase=passphrase, output=path_out, always_trust=True )
     shutil.rmtree(tmpdir)
 
     if res.status != 'decryption ok':
         log.debug("decrypt_file: %s" % res.__dict__)
         return {'error': 'Failed to decrypt data'}
 
+    log.debug("decryption succeeded from keys in %s" % config_dir)
     return {'status': True}
 
