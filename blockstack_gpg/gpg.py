@@ -913,7 +913,7 @@ def gpg_decrypt( fd_in, path_out, sender_key_info, my_key_info, passphrase=None,
     shutil.rmtree(tmpdir)
 
     if res.status != 'decryption ok':
-        log.debug("decrypt_file: %s" % res.__dict__}
+        log.debug("decrypt_file: %s" % res.__dict__)
         return {'error': 'Failed to decrypt data'}
 
     return {'status': True}
