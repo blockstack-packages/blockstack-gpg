@@ -338,7 +338,7 @@ def gpg_list_app_keys( blockchain_id, appname, proxy=None, wallet_keys=None ):
     # immutable data key listing (look for keys that start with 'appname:')
     immutable_listing = list_immutable_data( blockchain_id, proxy=proxy )
     if 'error' in immutable_listing:
-        raise Exception("Blockstack error: %s" % key_listing['error'])
+        raise Exception("Blockstack error: %s" % immutable_listing['error'])
 
     for immutable in immutable_listing['data']:
         name = immutable['data_id']
