@@ -290,7 +290,7 @@ def gpg_export_key( appname, key_id, config_dir=None, include_private=False ):
     return keydat
 
 
-def gpg_list_profile_keys( name, proxy=None, wallet_keys=None ):
+def gpg_list_profile_keys( name, proxy=None, wallet_keys=None, config_dir=None ):
     """
     List all GPG keys in a user profile:
     Return a list of {'identifier': key ID, 'contentUrl': URL to the key data} on success
@@ -298,8 +298,11 @@ def gpg_list_profile_keys( name, proxy=None, wallet_keys=None ):
     Return {'error': ...} on failure
     """
 
+    config_dir = get_config_dir( config_dir )
+    client_config_path = os.path.join(config_dir, blockstack_client.CONFIG_FILENAME )
+
     if proxy is None:
-        proxy = blockstack_client.get_default_proxy()
+        proxy = blockstack_client.get_default_proxy( config_path=client_config_path )
 
     accounts = list_accounts( name, proxy=proxy, wallet_keys=wallet_keys )
     if 'error' in accounts:
@@ -323,7 +326,7 @@ def gpg_list_profile_keys( name, proxy=None, wallet_keys=None ):
     return ret
 
 
-def gpg_list_app_keys( blockchain_id, appname, proxy=None, wallet_keys=None ):
+def gpg_list_app_keys( blockchain_id, appname, proxy=None, wallet_keys=None, config_dir=None ):
     """
     List the set of available GPG keys tagged for a given application.
     Return list of {'keyName': key name, 'contentUrl': URL to key data}
@@ -331,6 +334,12 @@ def gpg_list_app_keys( blockchain_id, appname, proxy=None, wallet_keys=None ):
     """
 
     assert is_valid_appname(appname)
+
+    config_dir = get_config_dir( config_dir )
+    client_config_path = os.path.join(config_dir, blockstack_client.CONFIG_FILENAME )
+
+    if proxy is None:
+        proxy = blockstack_client.get_default_proxy( config_path=client_config_path )
 
     key_info = []
     key_prefix = "gpg.%s." % appname
@@ -388,7 +397,7 @@ def gpg_fetch_key( key_url, key_id=None, config_dir=None ):
 
         # handle blockstack:// URLs
         if key_url.startswith("blockstack://"):
-            blockstack_opener = BlockstackHandler()
+            blockstack_opener = BlockstackHandler( config_path=os.path.join(config_dir, blockstack_client.CONFIG_FILENAME) )
             opener = urllib2.build_opener( blockstack_opener )
             from_blockstack = True
 
@@ -409,6 +418,7 @@ def gpg_fetch_key( key_url, key_id=None, config_dir=None ):
             key_data = str(key_data_dict[key_data_dict.keys()[0]])
             f.close()
         except Exception, e:
+            log.exception(e)
             if key_id is not None:
                 log.error("Failed to fetch key '%s' from '%s'" % (key_id, key_url))
             else:
@@ -778,6 +788,10 @@ def gpg_app_create_key( blockchain_id, appname, keyname, txid=None, immutable=Fa
 
     if config_dir is None:
         config_dir = get_config_dir()
+
+    client_config_path = os.path.join(config_dir, blockstack_client.CONFIG_FILENAME)
+    if proxy is None:
+        proxy = blockstack_client.get_default_proxy(config_path=client_config_path)
 
     keydir = make_gpg_tmphome( "create-app-", config_dir=config_dir )
     gpg = gnupg.GPG( gnupghome=keydir )
