@@ -852,6 +852,95 @@ def gpg_app_get_key( blockchain_id, appname, keyname, immutable=False, key_id=No
     return ret
 
 
+def gpg_sign( path_to_sign, sender_key_info, config_dir=None, passphrase=None ):
+    """
+    Sign a file on disk.
+    @sender_key_info should be the result of gpg_app_get_key
+    Return {'status': True, 'sig': ...} on success
+    Return {'error': ...} on error
+    """
+
+    if config_dir is None:
+        config_dir = get_config_dir()
+
+    # ingest keys 
+    tmpdir = make_gpg_tmphome( prefix="sign", config_dir=config_dir )
+
+    try:
+        sender_privkey = gpg_export_key( sender_key_info['app_name'], sender_key_info['key_id'], include_private=True, config_dir=config_dir )
+    except Exception, e:
+        log.exception(e)
+        shutil.rmtree(tmpdir)
+        return {'error': 'No such private key'}
+
+    res = gpg_stash_key( "sign", sender_privkey, config_dir=config_dir, gpghome=tmpdir )
+    if res is None:
+        shutil.rmtree(tmpdir)
+        return {'error': 'Failed to load sender private key'}
+
+    # do the signature
+    gpg = gnupg.GPG( gnupghome=tmpdir )
+    res = None
+
+    with open(path_to_sign, "r") as fd_in:
+        res = gpg.sign_file( fd_in, keyid=sender_key_info['key_id'], passphrase=passphrase, detach=True )
+
+    shutil.rmtree(tmpdir)
+
+    if not res:
+        log.debug("sign_file error: %s" % res.__dict__)
+        log.debug("signer: %s" % sender_key_info['key_id'])
+        return {'error': 'Failed to encrypt data'}
+    
+    return {'status': True, 'sig': res.data }
+
+
+def gpg_verify( path_to_verify, sigdata, sender_key_info, config_dir=None ):
+    """
+    Verify a file on disk was signed by the given sender.
+    @sender_key_info should be the result of gpg_app_get_key
+    Return {'status': True} on success
+    Return {'error': ...} on error
+    """
+
+    if config_dir is None:
+        config_dir = get_config_dir()
+
+    # ingest keys 
+    tmpdir = make_gpg_tmphome( prefix="verify", config_dir=config_dir )
+    res = gpg_stash_key( "verify", sender_key_info['key_data'], config_dir=config_dir, gpghome=tmpdir )
+    if res is None:
+        shutil.rmtree(tmpdir)
+        return {'error': 'Failed to stash key %s' % sender_key_info['key_id']}
+
+    # stash detached signature 
+    fd, path = tempfile.mkstemp( prefix=".sig-verify-" )
+    f = os.fdopen(fd, "w")
+    f.write( sigdata )
+    f.flush()
+    os.fsync(f.fileno())
+    f.close()
+
+    # verify 
+    gpg = gnupg.GPG( gnupghome=tmpdir )
+
+    with open(path, "r") as fd_in:
+        res = gpg.verify_file( fd_in, data_filename=path_to_verify )
+
+    shutil.rmtree(tmpdir)
+    try:
+        os.unlink(path)
+    except:
+        pass
+
+    if not res:
+        log.debug("verify_file error: %s" % res.__dict__)
+        return {'error': 'Failed to decrypt data'}
+
+    log.debug("verification succeeded from keys in %s" % config_dir)
+    return {'status': True}
+
+
 def gpg_encrypt( fd_in, path_out, sender_key_info, recipient_key_infos, passphrase=None, config_dir=None ):
     """
     Encrypt a stream of data for a set of keys.
@@ -917,7 +1006,7 @@ def gpg_decrypt( fd_in, path_out, sender_key_info, my_key_info, passphrase=None,
     res = gpg_stash_key( "decrypt", sender_key_info['key_data'], config_dir=config_dir, gpghome=tmpdir )
     if res is None:
         shutil.rmtree(tmpdir)
-        return {'error': 'Failed to stash key %s' % key_info['key_id']}
+        return {'error': 'Failed to stash key %s' % sender_key_info['key_id']}
 
     try:
         my_privkey = gpg_export_key( my_key_info['app_name'], my_key_info['key_id'], include_private=True, config_dir=config_dir )
