@@ -156,7 +156,7 @@ def gpg_stash_key( appname, key_bin, config_dir=None, gpghome=None ):
     res = gpg.import_keys( key_bin )
 
     try:
-        assert res.count == 1, "Failed to store key"
+        assert res.count == 1, "Failed to store key (%s)" % res
     except AssertionError, e:
         log.exception(e)
         log.error("Failed to store key to %s" % keydir)
@@ -183,11 +183,16 @@ def gpg_unstash_key( appname, key_id, config_dir=None, gpghome=None ):
 
     gpg = gnupg.GPG( gnupghome=keydir )
     res = gpg.delete_keys( [key_id] )
+    if res.status == 'Must delete secret key first':
+        # this is a private key 
+        res = gpg.delete_keys( [key_id], secret=True )
+
     try:
-        assert res.status == 'ok', "Failed to delete key"
+        assert res.status == 'ok', "Failed to delete key (%s)" % res
     except AssertionError, e:
         log.exception(e)
         log.error("Failed to delete key '%s'" % key_id)
+        log.debug("res: %s" % res.__dict__)
         return False
 
     return True
@@ -770,6 +775,9 @@ def gpg_app_delete_key( blockchain_id, appname, keyname, txid=None, immutable=Fa
     except:
         log.warning("Failed to remove private key for '%s'" % key_id )
         result['warning'] = "Failed to remove private key"
+        if os.environ.get('BLOCKSTACK_TEST') is not None:
+            # make sure this never happens in testing
+            raise
 
     return result
 
@@ -890,7 +898,7 @@ def gpg_sign( path_to_sign, sender_key_info, config_dir=None, passphrase=None ):
     if not res:
         log.debug("sign_file error: %s" % res.__dict__)
         log.debug("signer: %s" % sender_key_info['key_id'])
-        return {'error': 'Failed to encrypt data'}
+        return {'error': 'Failed to sign data'}
     
     return {'status': True, 'sig': res.data }
 
