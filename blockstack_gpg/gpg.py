@@ -313,6 +313,8 @@ def gpg_list_profile_keys( name, proxy=None, wallet_keys=None, config_dir=None )
     if 'error' in accounts:
         raise Exception("Blockstack error: %s" % accounts['error'] )
 
+    # extract
+    accounts = accounts['accounts']
     ret = []
     for account in accounts:
         if account['service'] != 'pgp':
@@ -628,6 +630,9 @@ def gpg_profile_get_key( blockchain_id, keyname, key_id=None, proxy=None, wallet
     accounts = blockstack_client.list_accounts( blockchain_id, proxy=proxy, wallet_keys=wallet_keys )
     if 'error' in accounts:
         return accounts
+
+    # extract
+    accounts = accounts['accounts']
 
     if len(accounts) == 0:
         return {'error': 'No accounts in this profile'}
