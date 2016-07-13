@@ -1,4 +1,5 @@
-# blockstack-GPG
+# Blockstack GPG
 
 GPG key integration for Blockstack client applications.
-Documentation forthcoming; currently only works with the `develop` branch of [blockstack-client][https://github.com/blockstack/blockstack-client].
+
+*Note: Full documentation on this library is coming soon. Make sure to use the `develop` branch of [the Blockstack client](https://github.com/blockstack/blockstack-client) while using it.*
