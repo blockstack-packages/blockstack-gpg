@@ -24,7 +24,10 @@
 import os
 import sys
 import traceback
+import logging
 import gnupg
+logging.getLogger("gnupg").setLevel( logging.CRITICAL )
+
 import urllib2
 import tempfile
 import shutil
@@ -44,9 +47,7 @@ client = blockstack_client
 
 log = get_logger("blockstack-gpg")
 
-import logging
 import urllib
-logging.getLogger("gnupg").setLevel( logging.CRITICAL )
 
 DEFAULT_KEY_SERVER = 'pgp.mit.edu'
 
@@ -145,6 +146,7 @@ def gpg_stash_key( appname, key_bin, config_dir=None, gpghome=None ):
 
     assert is_valid_appname(appname)
     key_bin = str(key_bin)
+    assert len(key_bin) > 0
 
     if gpghome is None:
         config_dir = get_config_dir( config_dir )
@@ -599,8 +601,11 @@ def gpg_profile_create_key( blockchain_id, keyname, immutable=True, proxy=None, 
 
     key_input = gpg.gen_key_input( key_type="RSA", name_email=blockchain_id, key_length=4096, name_real=keyname )
     key_res = gpg.gen_key( key_input )
+    assert key_res
+
     key_id = key_res.fingerprint
     key_data = gpg.export_keys( [key_id] )
+    assert key_data
 
     # save the key itself, to the global keyring
     rc = gpg_stash_key( keyname, key_data, gpghome=gpghome ) 
