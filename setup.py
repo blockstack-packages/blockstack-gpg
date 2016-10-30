@@ -19,8 +19,8 @@ setup(
     zip_safe=False,
     include_package_data=True,
     install_requires=[
-        'blockstack-client>=0.0.13.0',
-        'python-gnupg==0.3.8'
+        'blockstack-client>=0.14.0',
+        'python-gnupg>=0.3.9'
     ],
     classifiers=[
         'Intended Audience :: Developers',
