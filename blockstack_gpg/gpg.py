@@ -40,8 +40,10 @@ from ConfigParser import SafeConfigParser
 import blockstack_client
 from blockstack_client import get_logger, get_config
 from blockstack_client import BlockstackHandler
-from blockstack_client import list_accounts, list_immutable_data, list_mutable_data
+from blockstack_client import list_immutable_data
 from blockstack_client import make_mutable_data_url, make_immutable_data_url
+
+import blockstack_profiles
 
 client = blockstack_client
 
@@ -297,6 +299,33 @@ def gpg_export_key( appname, key_id, config_dir=None, include_private=False ):
     return keydat
 
 
+def _list_accounts(name, proxy=None):
+    """
+    Get the list of accounts in a name's Person-formatted profile.
+    Return {'accounts': ...} on success
+    Return {'error': ...} on error
+    """
+
+    profile, zonefile = blockstack_client.get_name_profile(name, proxy=proxy, use_legacy_zonefile=True)
+    if 'error' in zonefile:
+        return {'error': 'Failed to load zonefile: {}'.format(zonefile['error'])}
+
+    if blockstack_profiles.is_profile_in_legacy_format(profile):
+        return {'error': 'Legacy profile'}
+
+    try:
+        profile = blockstack_profiles.Person(profile)
+    except Exception as e:
+        log.exception(e)
+        return {'error': 'Failed to parse profile data into a Person record'}
+    
+    accounts = []
+    if hasattr(profile, 'account'):
+        accounts = profile.account
+
+    return {'accounts': accounts}
+
+
 def gpg_list_profile_keys( name, proxy=None, wallet_keys=None, config_dir=None ):
     """
     List all GPG keys in a user profile:
@@ -311,12 +340,13 @@ def gpg_list_profile_keys( name, proxy=None, wallet_keys=None, config_dir=None )
     if proxy is None:
         proxy = blockstack_client.get_default_proxy( config_path=client_config_path )
 
-    accounts = list_accounts( name, proxy=proxy, wallet_keys=wallet_keys )
+    accounts = _list_accounts(name, proxy=proxy)
     if 'error' in accounts:
-        raise Exception("Blockstack error: %s" % accounts['error'] )
+        return accounts
+
+    accounts = accounts.pop('accounts')
 
     # extract
-    accounts = accounts['accounts']
     ret = []
     for account in accounts:
         if account['service'] != 'pgp':
@@ -341,6 +371,8 @@ def gpg_list_app_keys( blockchain_id, appname, proxy=None, wallet_keys=None, con
     Return list of {'keyName': key name, 'contentUrl': URL to key data}
     Raise on error
     """
+
+    raise Exception("BROKEN; depends on list_mutable_data")
 
     assert is_valid_appname(appname)
 
@@ -368,6 +400,7 @@ def gpg_list_app_keys( blockchain_id, appname, proxy=None, wallet_keys=None, con
             })
 
     # mutable data key listing (look for keys that start with 'appname:')
+    # TODO: use 'accounts'
     mutable_listing = list_mutable_data( blockchain_id, proxy=proxy, wallet_keys=wallet_keys )
     if 'error' in mutable_listing:
         raise Exception("Blockstack error: %s" % mutable_listing['error'])
@@ -632,12 +665,11 @@ def gpg_profile_get_key( blockchain_id, keyname, key_id=None, proxy=None, wallet
     if gpghome is None:
         gpghome = get_default_gpg_home()
 
-    accounts = blockstack_client.list_accounts( blockchain_id, proxy=proxy, wallet_keys=wallet_keys )
+    accounts = _list_accounts(name, proxy=proxy)
     if 'error' in accounts:
         return accounts
 
-    # extract
-    accounts = accounts['accounts']
+    accounts = accounts.pop('accounts')
 
     if len(accounts) == 0:
         return {'error': 'No accounts in this profile'}
