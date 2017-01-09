@@ -20,7 +20,7 @@ setup(
     include_package_data=True,
     install_requires=[
         'blockstack-client>=0.14.0',
-        'python-gnupg>=0.3.9'
+        'gnupg>=2.2.0'
     ],
     classifiers=[
         'Intended Audience :: Developers',
