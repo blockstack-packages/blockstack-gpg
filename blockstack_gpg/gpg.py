@@ -422,9 +422,17 @@ def gpg_fetch_key( key_url, key_id=None, config_dir=None ):
         try:
             f = opener.open( key_url )
             key_data_str = f.read()
-            key_data_dict = json.loads(key_data_str)
-            assert len(key_data_dict) == 1, "Got multiple keys"
-            key_data = str(key_data_dict[key_data_dict.keys()[0]])
+
+            if from_blockstack:
+                # expect: {'key name': 'PEM string'}
+                key_data_dict = json.loads(key_data_str)
+                assert len(key_data_dict) == 1, "Got multiple keys"
+                key_data = str(key_data_dict[key_data_dict.keys()[0]])
+
+            else:
+                # expect: PEM string
+                key_data = key_data_str
+
             f.close()
         except Exception, e:
             log.exception(e)
