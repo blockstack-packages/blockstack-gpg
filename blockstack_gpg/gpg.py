@@ -420,29 +420,27 @@ def gpg_list_app_keys( blockchain_id, appname, proxy=None, wallet_keys=None, con
 def gpg_fetch_key( key_url, key_id=None, config_dir=None ):
     """
     Fetch a GPG public key from the given URL.
-    Supports anything urllib2 supports, as well as blockstack://
+    Supports anything urllib2 supports.
     If the URL has no scheme, then assume it's a PGP key server, and use GPG to go get it.
     The key is not accepted into any keyrings.
-
     Return the key data on success.  If key_id is given, verify the key matches.
     Return None on error, or on failure to carry out any key verification
-       (note that resolving blockstack:// URLs automatically verifies keys)
     """
 
     dat = None
+    from_blockstack = False
 
     if "://" in key_url:
 
         opener = None 
         key_data = None
-        from_blockstack = False
 
         # handle blockstack:// URLs
         if key_url.startswith("blockstack://"):
             blockstack_opener = BlockstackHandler( config_path=os.path.join(config_dir, blockstack_client.CONFIG_FILENAME) )
             opener = urllib2.build_opener( blockstack_opener )
             from_blockstack = True
-
+            
         elif key_url.startswith("http://") or key_url.startswith("https://"):
             # fetch, but at least try not to look like a bot
             opener = urllib2.build_opener()
@@ -454,10 +452,15 @@ def gpg_fetch_key( key_url, key_id=None, config_dir=None ):
 
         try:
             f = opener.open( key_url )
-            key_data_str = f.read()
-            key_data_dict = json.loads(key_data_str)
-            assert len(key_data_dict) == 1, "Got multiple keys"
-            key_data = str(key_data_dict[key_data_dict.keys()[0]])
+            key_data = f.read()
+
+            # if we got this from blockstack, then expect {'key name': 'key PEM string'}
+            # otherwise, expect PEM string
+            if from_blockstack:
+                key_data_dict = json.loads(key_data_str)
+                assert len(key_data_dict) == 1, "Got multiple keys"
+                key_data = str(key_data_dict[key_data_dict.keys()[0]])
+            
             f.close()
         except Exception, e:
             log.exception(e)
@@ -687,7 +690,7 @@ def gpg_profile_get_key( blockchain_id, keyname, key_id=None, proxy=None, wallet
         return {'error': 'Multiple keys with that name'}
 
     # go get the key 
-    key_data = gpg_fetch_key( gpg_accounts[0]['contentUrl'], key_id=gpg_accounts[0]['identifier'], config_dir=config_dir )
+    key_data = gpg_fetch_key( gpg_accounts[0]['contentUrl'], gpg_accounts[0]['identifier'], config_dir=config_dir )
     if key_data is None:
         return {'error': 'Failed to download and verify key'}
 
@@ -885,7 +888,7 @@ def gpg_app_get_key( blockchain_id, appname, keyname, immutable=False, key_id=No
         key_url = blockstack_client.make_mutable_data_url( blockchain_id, fq_key_name, key_version )
 
     log.debug("fetch '%s'" % key_url)
-    key_data = gpg_fetch_key( key_url, key_id=key_id, config_dir=config_dir )
+    key_data = gpg_fetch_key( key_url, key_id, config_dir=config_dir )
     if key_data is None:
         return {'error': 'Failed to fetch key'}
 
@@ -905,7 +908,12 @@ def gpg_app_get_key( blockchain_id, appname, keyname, immutable=False, key_id=No
 def gpg_sign( path_to_sign, sender_key_info, config_dir=None, passphrase=None ):
     """
     Sign a file on disk.
-    @sender_key_info should be the result of gpg_app_get_key
+    @sender_key_info should be a dict with
+    {
+        'key_id': ...
+        'key_data': ...
+        'app_name': ...
+    }
     Return {'status': True, 'sig': ...} on success
     Return {'error': ...} on error
     """
@@ -948,7 +956,12 @@ def gpg_sign( path_to_sign, sender_key_info, config_dir=None, passphrase=None ):
 def gpg_verify( path_to_verify, sigdata, sender_key_info, config_dir=None ):
     """
     Verify a file on disk was signed by the given sender.
-    @sender_key_info should be the result of gpg_app_get_key
+    @sender_key_info should be a dict with
+    {
+        'key_id': ...
+        'key_data': ...
+        'app_name'; ...
+    }
     Return {'status': True} on success
     Return {'error': ...} on error
     """
@@ -994,7 +1007,12 @@ def gpg_verify( path_to_verify, sigdata, sender_key_info, config_dir=None ):
 def gpg_encrypt( fd_in, path_out, sender_key_info, recipient_key_infos, passphrase=None, config_dir=None ):
     """
     Encrypt a stream of data for a set of keys.
-    @sender_key_info and @recipient_key_infos should be data returned by gpg_app_get_key.
+    @sender_key_info should be a dict with
+    {
+        'key_id': ...
+        'key_data': ...
+        'app_name'; ...
+    }
     Return {'status': True} on success
     Return {'error': ...} on error
     """
@@ -1044,6 +1062,12 @@ def gpg_decrypt( fd_in, path_out, sender_key_info, my_key_info, passphrase=None,
     Decrypt a stream of data using key info 
     for a private key we own.
     @my_key_info and @sender_key_info should be data returned by gpg_app_get_key
+    {
+        'key_id': ...
+        'key_data': ...
+        'app_name': ...
+    }
+    Return {'status': True, 'sig': ...} on success
     Return {'status': True} on succes
     Return {'error': ...} on error
     """
