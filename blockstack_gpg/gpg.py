@@ -311,7 +311,7 @@ def gpg_list_profile_keys( name, proxy=None, wallet_keys=None, config_dir=None )
     if proxy is None:
         proxy = blockstack_client.get_default_proxy( config_path=client_config_path )
 
-    accounts = list_accounts( name, proxy=proxy, wallet_keys=wallet_keys )
+    accounts = list_accounts( name, proxy=proxy )
     if 'error' in accounts:
         raise Exception("Blockstack error: %s" % accounts['error'] )
 
@@ -632,7 +632,7 @@ def gpg_profile_get_key( blockchain_id, keyname, key_id=None, proxy=None, wallet
     if gpghome is None:
         gpghome = get_default_gpg_home()
 
-    accounts = blockstack_client.list_accounts( blockchain_id, proxy=proxy, wallet_keys=wallet_keys )
+    accounts = blockstack_client.list_accounts( blockchain_id, proxy=proxy )
     if 'error' in accounts:
         return accounts
 
