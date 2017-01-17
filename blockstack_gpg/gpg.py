@@ -29,6 +29,7 @@ import gnupg
 logging.getLogger("gnupg").setLevel( logging.CRITICAL )
 
 import urllib2
+import urlparse
 import tempfile
 import shutil
 import base64
@@ -398,7 +399,14 @@ def gpg_fetch_key( key_url, key_id=None, config_dir=None ):
 
     dat = None
 
-    if "://" in key_url:
+    # make sure it's valid 
+    try:
+        urlparse.urlparse(key_url)
+    except:
+        log.error("Invalid URL")
+        return None
+
+    if "://" in key_url and not key_url.lower().startswith("iks://"):
 
         opener = None 
         key_data = None
@@ -410,7 +418,7 @@ def gpg_fetch_key( key_url, key_id=None, config_dir=None ):
             opener = urllib2.build_opener( blockstack_opener )
             from_blockstack = True
 
-        elif key_url.startswith("http://") or key_url.startswith("https://"):
+        elif key_url.lower().startswith("http://") or key_url.lower().startswith("https://"):
             # fetch, but at least try not to look like a bot
             opener = urllib2.build_opener()
             opener.addheaders = [('User-agent', 'Mozilla/5.0')]
@@ -458,7 +466,11 @@ def gpg_fetch_key( key_url, key_id=None, config_dir=None ):
         dat = key_data 
 
     else:
+        # iks protocol, fetch from keyserver
         key_server = key_url
+        if '://' in key_server:
+            key_server = urlparse.urlparse(key_server).netloc
+
         dat = gpg_download_key( key_id, key_server, config_dir=config_dir )
         assert dat is not None and len(dat) > 0, "BUG: no key data received for '%s' from '%s'" % (key_id, key_url)
 
@@ -662,8 +674,10 @@ def gpg_profile_get_key( blockchain_id, keyname, key_id=None, proxy=None, wallet
     if len(gpg_accounts) > 1:
         return {'error': 'Multiple keys with that name'}
 
+    key_url = gpg_accounts[0].get('contentUrl', DEFAULT_KEY_SERVER)
+
     # go get the key 
-    key_data = gpg_fetch_key( gpg_accounts[0]['contentUrl'], key_id=gpg_accounts[0]['identifier'], config_dir=config_dir )
+    key_data = gpg_fetch_key( key_url, key_id=gpg_accounts[0]['identifier'], config_dir=config_dir )
     if key_data is None:
         return {'error': 'Failed to download and verify key'}
 
