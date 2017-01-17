@@ -1,4 +1,4 @@
-#!/usr/bin/python
+#!/usr/bin/env python2
 # -*- coding: utf-8 -*-
 """
     Blockstack-gpg
@@ -29,6 +29,7 @@ import gnupg
 logging.getLogger("gnupg").setLevel( logging.CRITICAL )
 
 import urllib2
+import urlparse
 import tempfile
 import shutil
 import base64
@@ -299,33 +300,6 @@ def gpg_export_key( appname, key_id, config_dir=None, include_private=False ):
     return keydat
 
 
-def _list_accounts(name, proxy=None):
-    """
-    Get the list of accounts in a name's Person-formatted profile.
-    Return {'accounts': ...} on success
-    Return {'error': ...} on error
-    """
-
-    profile, zonefile = blockstack_client.get_name_profile(name, proxy=proxy, use_legacy_zonefile=True)
-    if 'error' in zonefile:
-        return {'error': 'Failed to load zonefile: {}'.format(zonefile['error'])}
-
-    if blockstack_profiles.is_profile_in_legacy_format(profile):
-        return {'error': 'Legacy profile'}
-
-    try:
-        profile = blockstack_profiles.Person(profile)
-    except Exception as e:
-        log.exception(e)
-        return {'error': 'Failed to parse profile data into a Person record'}
-    
-    accounts = []
-    if hasattr(profile, 'account'):
-        accounts = profile.account
-
-    return {'accounts': accounts}
-
-
 def gpg_list_profile_keys( name, proxy=None, wallet_keys=None, config_dir=None ):
     """
     List all GPG keys in a user profile:
@@ -340,7 +314,7 @@ def gpg_list_profile_keys( name, proxy=None, wallet_keys=None, config_dir=None )
     if proxy is None:
         proxy = blockstack_client.get_default_proxy( config_path=client_config_path )
 
-    accounts = _list_accounts(name, proxy=proxy)
+    accounts = blockstack_client.list_accounts( blockchain_id, proxy=proxy )
     if 'error' in accounts:
         return accounts
 
@@ -430,7 +404,14 @@ def gpg_fetch_key( key_url, key_id=None, config_dir=None ):
     dat = None
     from_blockstack = False
 
-    if "://" in key_url:
+    # make sure it's valid 
+    try:
+        urlparse.urlparse(key_url)
+    except:
+        log.error("Invalid URL")
+        return None
+
+    if "://" in key_url and not key_url.lower().startswith("iks://"):
 
         opener = None 
         key_data = None
@@ -440,8 +421,8 @@ def gpg_fetch_key( key_url, key_id=None, config_dir=None ):
             blockstack_opener = BlockstackHandler( config_path=os.path.join(config_dir, blockstack_client.CONFIG_FILENAME) )
             opener = urllib2.build_opener( blockstack_opener )
             from_blockstack = True
-            
-        elif key_url.startswith("http://") or key_url.startswith("https://"):
+
+        elif key_url.lower().startswith("http://") or key_url.lower().startswith("https://"):
             # fetch, but at least try not to look like a bot
             opener = urllib2.build_opener()
             opener.addheaders = [('User-agent', 'Mozilla/5.0')]
@@ -452,16 +433,21 @@ def gpg_fetch_key( key_url, key_id=None, config_dir=None ):
 
         try:
             f = opener.open( key_url )
-            key_data = f.read()
+            key_data_str = f.read()
+            key_data = None
 
-            # if we got this from blockstack, then expect {'key name': 'key PEM string'}
-            # otherwise, expect PEM string
             if from_blockstack:
+                # expect: {'key name': 'PEM string'}
                 key_data_dict = json.loads(key_data_str)
                 assert len(key_data_dict) == 1, "Got multiple keys"
                 key_data = str(key_data_dict[key_data_dict.keys()[0]])
-            
+
+            else:
+                # expect: PEM string
+                key_data = key_data_str
+
             f.close()
+
         except Exception, e:
             log.exception(e)
             if key_id is not None:
@@ -486,7 +472,11 @@ def gpg_fetch_key( key_url, key_id=None, config_dir=None ):
         dat = key_data 
 
     else:
+        # iks protocol, fetch from keyserver
         key_server = key_url
+        if '://' in key_server:
+            key_server = urlparse.urlparse(key_server).netloc
+
         dat = gpg_download_key( key_id, key_server, config_dir=config_dir )
         assert dat is not None and len(dat) > 0, "BUG: no key data received for '%s' from '%s'" % (key_id, key_url)
 
@@ -668,7 +658,7 @@ def gpg_profile_get_key( blockchain_id, keyname, key_id=None, proxy=None, wallet
     if gpghome is None:
         gpghome = get_default_gpg_home()
 
-    accounts = _list_accounts(name, proxy=proxy)
+    accounts = blockstack_client.list_accounts( blockchain_id, proxy=proxy )
     if 'error' in accounts:
         return accounts
 
@@ -689,8 +679,10 @@ def gpg_profile_get_key( blockchain_id, keyname, key_id=None, proxy=None, wallet
     if len(gpg_accounts) > 1:
         return {'error': 'Multiple keys with that name'}
 
+    key_url = gpg_accounts[0].get('contentUrl', DEFAULT_KEY_SERVER)
+
     # go get the key 
-    key_data = gpg_fetch_key( gpg_accounts[0]['contentUrl'], gpg_accounts[0]['identifier'], config_dir=config_dir )
+    key_data = gpg_fetch_key( key_url, key_id=gpg_accounts[0]['identifier'], config_dir=config_dir )
     if key_data is None:
         return {'error': 'Failed to download and verify key'}
 
