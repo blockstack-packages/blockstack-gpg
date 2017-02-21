@@ -300,7 +300,7 @@ def gpg_export_key( appname, key_id, config_dir=None, include_private=False ):
     return keydat
 
 
-def gpg_list_profile_keys( name, proxy=None, wallet_keys=None, config_dir=None ):
+def gpg_list_profile_keys( blockchain_id, proxy=None, wallet_keys=None, config_dir=None ):
     """
     List all GPG keys in a user profile:
     Return a list of {'identifier': key ID, 'contentUrl': URL to the key data} on success
