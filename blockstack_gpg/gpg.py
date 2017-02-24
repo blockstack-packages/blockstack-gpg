@@ -157,7 +157,7 @@ def gpg_stash_key( appname, key_bin, config_dir=None, gpghome=None ):
     else:
         keydir = gpghome
 
-    gpg = gnupg.GPG( gnupghome=keydir )
+    gpg = gnupg.GPG( homedir=keydir )
     res = gpg.import_keys( key_bin )
 
     try:
@@ -186,7 +186,7 @@ def gpg_unstash_key( appname, key_id, config_dir=None, gpghome=None ):
     else:
         keydir = gpghome
 
-    gpg = gnupg.GPG( gnupghome=keydir )
+    gpg = gnupg.GPG( homedir=keydir )
     res = gpg.delete_keys( [key_id] )
     if res.status == 'Must delete secret key first':
         # this is a private key 
@@ -212,7 +212,7 @@ def gpg_download_key( key_id, key_server, config_dir=None ):
 
     config_dir = get_config_dir( config_dir )
     tmpdir = make_gpg_tmphome( prefix="download", config_dir=config_dir )
-    gpg = gnupg.GPG( gnupghome=tmpdir )
+    gpg = gnupg.GPG( homedir=tmpdir )
     recvdat = gpg.recv_keys( key_server, key_id )
     fingerprint = None
 
@@ -243,7 +243,7 @@ def gpg_key_fingerprint( key_data, config_dir=None ):
 
     config_dir = get_config_dir( config_dir )
     tmpdir = make_gpg_tmphome( prefix="key_id-", config_dir=config_dir )
-    gpg = gnupg.GPG( gnupghome=tmpdir )
+    gpg = gnupg.GPG( homedir=tmpdir )
     res = gpg.import_keys( key_data )
 
     try:
@@ -295,7 +295,7 @@ def gpg_export_key( appname, key_id, config_dir=None, include_private=False ):
     assert is_valid_appname(appname)
     config_dir = get_config_dir( config_dir )
     keydir = get_gpg_home( appname, config_dir=config_dir )
-    gpg = gnupg.GPG( gnupghome=keydir )
+    gpg = gnupg.GPG( homedir=keydir )
     keydat = gpg.export_keys( [key_id], secret=include_private )
 
     if not keydat:
@@ -514,7 +514,7 @@ def gpg_profile_put_key( blockchain_id, key_id, key_name=None, immutable=True, t
 
     if key_url is None:
 
-        gpg = gnupg.GPG( gnupghome=gpghome )
+        gpg = gnupg.GPG( homedir=gpghome )
 
         if use_key_server:
             # replicate key data to default server first 
@@ -626,7 +626,7 @@ def gpg_profile_create_key( blockchain_id, keyname, immutable=True, proxy=None, 
         gpghome = get_default_gpg_home()
 
     keydir = make_gpg_tmphome( "create-account-", config_dir=config_dir )
-    gpg = gnupg.GPG( gnupghome=keydir )
+    gpg = gnupg.GPG( homedir=keydir )
 
     log.debug("Generating GPG key (this may take a while)")
 
@@ -844,7 +844,7 @@ def gpg_app_create_key( blockchain_id, appname, keyname, txid=None, immutable=Fa
         proxy = blockstack_client.get_default_proxy(config_path=client_config_path)
 
     keydir = make_gpg_tmphome( "create-app-", config_dir=config_dir )
-    gpg = gnupg.GPG( gnupghome=keydir )
+    gpg = gnupg.GPG( homedir=keydir )
 
     log.debug("Generating GPG key (this may take a while)")
 
@@ -934,7 +934,7 @@ def gpg_sign( path_to_sign, sender_key_info, config_dir=None, passphrase=None ):
         return {'error': 'Failed to load sender private key'}
 
     # do the signature
-    gpg = gnupg.GPG( gnupghome=tmpdir )
+    gpg = gnupg.GPG( homedir=tmpdir )
     res = None
 
     with open(path_to_sign, "r") as fd_in:
@@ -982,7 +982,7 @@ def gpg_verify( path_to_verify, sigdata, sender_key_info, config_dir=None ):
     f.close()
 
     # verify 
-    gpg = gnupg.GPG( gnupghome=tmpdir )
+    gpg = gnupg.GPG( homedir=tmpdir )
 
     with open(path, "r") as fd_in:
         res = gpg.verify_file( fd_in, data_filename=path_to_verify )
@@ -1041,7 +1041,7 @@ def gpg_encrypt( fd_in, path_out, sender_key_info, recipient_key_infos, passphra
     recipient_key_ids = [r['key_id'] for r in recipient_key_infos]
 
     # do the encryption
-    gpg = gnupg.GPG( gnupghome=tmpdir )
+    gpg = gnupg.GPG( homedir=tmpdir )
     res = gpg.encrypt_file( fd_in, recipient_key_ids, sign=sender_key_info['key_id'], passphrase=passphrase, output=path_out, always_trust=True )
     shutil.rmtree(tmpdir)
 
@@ -1091,7 +1091,7 @@ def gpg_decrypt( fd_in, path_out, sender_key_info, my_key_info, passphrase=None,
         return {'error': 'Failed to load private key'}
 
     # do the decryption 
-    gpg = gnupg.GPG( gnupghome=tmpdir )
+    gpg = gnupg.GPG( homedir=tmpdir )
     res = gpg.decrypt_file( fd_in, passphrase=passphrase, output=path_out, always_trust=True )
     shutil.rmtree(tmpdir)
 
