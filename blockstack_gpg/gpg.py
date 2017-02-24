@@ -269,6 +269,11 @@ def gpg_verify_key( key_id, key_data, config_dir=None ):
 
     config_dir = get_config_dir( config_dir )
     sanitized_key_id = "".join( key_id.upper().split(" ") )
+    
+    if len(sanitized_key_id) < 16:
+        log.debug("Fingerprint is too short to be secure")
+        return False
+
     fingerprint = gpg_key_fingerprint( key_data, config_dir=config_dir )
     if fingerprint is None:
         log.debug("Failed to fingerprint key")
