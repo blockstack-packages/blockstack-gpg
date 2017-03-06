@@ -19,7 +19,7 @@ setup(
     zip_safe=False,
     include_package_data=True,
     install_requires=[
-        'blockstack-client>=0.14.0',
+        'blockstack>=0.14.1',
         'gnupg>=2.2.0'
     ],
     classifiers=[
